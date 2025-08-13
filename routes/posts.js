@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const Post = require('../models/Post');
 const { upload, cloudinary } = require('../config/cloudinary');
+const authMiddleware = require('../middleware/auth');
+
+// --- Public Routes ---
 
 // Get all posts
 router.get('/', async (req, res) => {
@@ -26,19 +29,23 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Create new post
-router.post('/', upload.single('image'), async (req, res) => {
+
+// --- Protected Routes ---
+
+// Create new post - Requires authentication
+router.post('/', authMiddleware, upload.single('image'), async (req, res) => {
   try {
-    const { title, content, author, tags } = req.body;
-    
+    const { title, content, tags } = req.body;
+    const { uid, name, email } = req.user; // User info from auth middleware
+
     const postData = {
       title,
       content,
-      author,
+      author: name || email, // Use display name or email as author
+      userId: uid, // Link post to the user
       tags: tags ? tags.split(',').map(tag => tag.trim()) : []
     };
 
-    // If image was uploaded, add image URL and public ID
     if (req.file) {
       postData.imageUrl = req.file.path;
       postData.imagePublicId = req.file.filename;
@@ -49,7 +56,6 @@ router.post('/', upload.single('image'), async (req, res) => {
     
     res.status(201).json(savedPost);
   } catch (error) {
-    // If there was an error and an image was uploaded, delete it from Cloudinary
     if (req.file) {
       await cloudinary.uploader.destroy(req.file.filename);
     }
@@ -57,8 +63,8 @@ router.post('/', upload.single('image'), async (req, res) => {
   }
 });
 
-// Update post
-router.put('/:id', upload.single('image'), async (req, res) => {
+// Update post - Requires authentication and authorization
+router.put('/:id', authMiddleware, upload.single('image'), async (req, res) => {
   try {
     const { title, content, author, tags } = req.body;
     const post = await Post.findById(req.params.id);
@@ -67,20 +73,20 @@ router.put('/:id', upload.single('image'), async (req, res) => {
       return res.status(404).json({ message: 'Post not found' });
     }
 
-    // Update basic fields
+    // Authorization check: Ensure the user owns the post
+    if (post.userId !== req.user.uid) {
+      return res.status(403).json({ message: 'Forbidden: You are not authorized to edit this post' });
+    }
+
     post.title = title || post.title;
     post.content = content || post.content;
-    post.author = author || post.author;
+    // Author is not updated, it's tied to the original creator
     post.tags = tags ? tags.split(',').map(tag => tag.trim()) : post.tags;
 
-    // Handle image update
     if (req.file) {
-      // Delete old image if exists
       if (post.imagePublicId) {
         await cloudinary.uploader.destroy(post.imagePublicId);
       }
-      
-      // Update with new image
       post.imageUrl = req.file.path;
       post.imagePublicId = req.file.filename;
     }
@@ -95,8 +101,8 @@ router.put('/:id', upload.single('image'), async (req, res) => {
   }
 });
 
-// Delete post
-router.delete('/:id', async (req, res) => {
+// Delete post - Requires authentication and authorization
+router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
     
@@ -104,7 +110,11 @@ router.delete('/:id', async (req, res) => {
       return res.status(404).json({ message: 'Post not found' });
     }
 
-    // Delete image from Cloudinary if exists
+    // Authorization check: Ensure the user owns the post
+    if (post.userId !== req.user.uid) {
+      return res.status(403).json({ message: 'Forbidden: You are not authorized to delete this post' });
+    }
+
     if (post.imagePublicId) {
       await cloudinary.uploader.destroy(post.imagePublicId);
     }

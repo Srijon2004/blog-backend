@@ -16,6 +16,11 @@ const postSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  // New field to store the Firebase User ID
+  userId: {
+    type: String,
+    required: true,
+  },
   imageUrl: {
     type: String,
     default: null
@@ -40,7 +45,9 @@ const postSchema = new mongoose.Schema({
 
 // Update the updatedAt field before saving
 postSchema.pre('save', function(next) {
-  this.updatedAt = Date.now();
+  if (this.isModified()) {
+    this.updatedAt = Date.now();
+  }
   next();
 });
 
